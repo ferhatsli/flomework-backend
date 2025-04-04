@@ -1,0 +1,116 @@
+/* Ana stil dosyası */
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f5f5f5;
+    color: #333;
+}
+
+.navbar-brand {
+    font-weight: bold;
+    font-size: 1.5rem;
+}
+
+.card {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+}
+
+.card-header {
+    font-weight: bold;
+}
+
+/* Test stilleri */
+.test-item {
+    transition: all 0.3s ease;
+}
+
+.test-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.option {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.option input[type="radio"] {
+    margin-right: 10px;
+}
+
+.option.correct {
+    animation: correct-answer 0.5s ease;
+}
+
+.option.incorrect {
+    animation: incorrect-answer 0.5s ease;
+}
+
+@keyframes correct-answer {
+    0% { background-color: transparent; }
+    50% { background-color: rgba(40, 167, 69, 0.4); }
+    100% { background-color: rgba(40, 167, 69, 0.2); }
+}
+
+@keyframes incorrect-answer {
+    0% { background-color: transparent; }
+    50% { background-color: rgba(220, 53, 69, 0.4); }
+    100% { background-color: rgba(220, 53, 69, 0.2); }
+}
+
+.explanation {
+    border-left: 4px solid #17a2b8;
+    padding-left: 15px;
+}
+
+.check-answer-btn {
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.check-answer-btn:hover {
+    background-color: #5a6268;
+}
+
+/* Yükleme modalı */
+#loading {
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+#loading .modal-content {
+    background-color: white;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
+
+/* Analiz sonuçları */
+.analysis-container {
+    font-family: 'Courier New', Courier, monospace;
+    line-height: 1.6;
+}
+
+/* Duyarlı tasarım */
+@media (max-width: 768px) {
+    .col-md-8.offset-md-2 {
+        padding: 0 10px;
+    }
+    
+    .card {
+        margin-bottom: 15px;
+    }
+    
+    .test-item {
+        padding: 10px;
+    }
+} 
