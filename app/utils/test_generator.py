@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 from typing import Dict, List, Any
 
 # Loglama yapılandırması
@@ -7,20 +8,196 @@ logger = logging.getLogger(__name__)
 
 class TestGenerator:
     """
-    Yapay zeka tarafından oluşturulan test verilerini işler ve kullanılabilir formata dönüştürür.
+    Transkript verisinden test soruları üreten sınıf.
     """
     
-    def __init__(self, raw_tests: str):
+    def __init__(self, transcript_data: Dict[str, Any]):
         """
         TestGenerator sınıfını başlatır.
         
         Args:
-            raw_tests (str): Yapay zeka tarafından oluşturulan ham test verileri.
+            transcript_data (Dict[str, Any]): İşlenmiş transkript verisi
         """
-        self.raw_tests = raw_tests
-        self.processed_tests = None
-        logger.debug(f"Ham test verileri: {raw_tests}")
+        self.transcript_data = transcript_data
+        self.openai_data = transcript_data.get('openai', {})
+        self.gladia_data = transcript_data.get('gladia_response', [])
+        self.calculations = transcript_data.get('calculations', {})
+        
+    def generate_multiple_choice(self, count: int = 10) -> List[Dict[str, Any]]:
+        """
+        Çoktan seçmeli sorular üretir.
+        
+        Args:
+            count (int): Üretilecek soru sayısı
+            
+        Returns:
+            List[Dict[str, Any]]: Üretilen sorular
+        """
+        questions = []
+        topics = self._extract_topics()
+        
+        for _ in range(count):
+            topic = random.choice(topics)
+            question = self._create_multiple_choice_question(topic)
+            if question:
+                questions.append(question)
+                
+        return questions[:count]  # İstenen sayıda soru döndür
     
+    def generate_true_false(self, count: int = 5) -> List[Dict[str, Any]]:
+        """
+        Doğru/Yanlış soruları üretir.
+        
+        Args:
+            count (int): Üretilecek soru sayısı
+            
+        Returns:
+            List[Dict[str, Any]]: Üretilen sorular
+        """
+        questions = []
+        statements = self._extract_statements()
+        
+        for _ in range(count):
+            statement = random.choice(statements)
+            question = self._create_true_false_question(statement)
+            if question:
+                questions.append(question)
+                
+        return questions[:count]
+    
+    def generate_fill_in_blanks(self, count: int = 5) -> List[Dict[str, Any]]:
+        """
+        Boşluk doldurma soruları üretir.
+        
+        Args:
+            count (int): Üretilecek soru sayısı
+            
+        Returns:
+            List[Dict[str, Any]]: Üretilen sorular
+        """
+        questions = []
+        sentences = self._extract_sentences()
+        
+        for _ in range(count):
+            sentence = random.choice(sentences)
+            question = self._create_fill_in_blank_question(sentence)
+            if question:
+                questions.append(question)
+                
+        return questions[:count]
+    
+    def _extract_topics(self) -> List[str]:
+        """
+        Transkript verisinden konu başlıklarını çıkarır.
+        """
+        topics = []
+        
+        # OpenAI analizinden konuları çıkar
+        if 'topics' in self.openai_data:
+            topics.extend(self.openai_data['topics'])
+            
+        # Gladia verisinden konuları çıkar
+        for utterance in self.gladia_data:
+            if 'topic' in utterance:
+                topics.append(utterance['topic'])
+                
+        return list(set(topics))  # Tekrar edenleri kaldır
+    
+    def _extract_statements(self) -> List[str]:
+        """
+        Transkript verisinden ifadeleri çıkarır.
+        """
+        statements = []
+        
+        # Gladia verisinden ifadeleri çıkar
+        for utterance in self.gladia_data:
+            if 'text' in utterance:
+                statements.append(utterance['text'])
+                
+        return statements
+    
+    def _extract_sentences(self) -> List[str]:
+        """
+        Transkript verisinden cümleleri çıkarır.
+        """
+        sentences = []
+        
+        # Gladia verisinden cümleleri çıkar
+        for utterance in self.gladia_data:
+            if 'text' in utterance:
+                # Basit cümle ayırma
+                text_sentences = utterance['text'].split('.')
+                sentences.extend([s.strip() for s in text_sentences if s.strip()])
+                
+        return sentences
+    
+    def _create_multiple_choice_question(self, topic: str) -> Dict[str, Any]:
+        """
+        Verilen konuyla ilgili çoktan seçmeli soru oluşturur.
+        """
+        # Konu ile ilgili metni bul
+        relevant_text = self._find_relevant_text(topic)
+        
+        if not relevant_text:
+            return None
+            
+        # Soru oluştur
+        return {
+            'type': 'multiple_choice',
+            'question': f"What is the main point discussed about {topic}?",
+            'options': [
+                {'id': 'A', 'text': relevant_text},
+                {'id': 'B', 'text': "This is an incorrect option"},
+                {'id': 'C', 'text': "This is another incorrect option"},
+                {'id': 'D', 'text': "This is the last incorrect option"}
+            ],
+            'correct_answer': 'A',
+            'explanation': f"The correct answer explains the main point about {topic}."
+        }
+    
+    def _create_true_false_question(self, statement: str) -> Dict[str, Any]:
+        """
+        Verilen ifadeden doğru/yanlış sorusu oluşturur.
+        """
+        return {
+            'type': 'true_false',
+            'question': statement,
+            'options': [
+                {'id': 'T', 'text': 'True'},
+                {'id': 'F', 'text': 'False'}
+            ],
+            'correct_answer': 'T',
+            'explanation': "This statement is true based on the conversation."
+        }
+    
+    def _create_fill_in_blank_question(self, sentence: str) -> Dict[str, Any]:
+        """
+        Verilen cümleden boşluk doldurma sorusu oluşturur.
+        """
+        # Cümleden bir kelime seç
+        words = sentence.split()
+        if len(words) < 3:  # Çok kısa cümleler için
+            return None
+            
+        word_to_blank = random.choice(words[1:-1])  # İlk ve son kelimeyi seçme
+        blank_sentence = sentence.replace(word_to_blank, "_____")
+        
+        return {
+            'type': 'fill_in_blank',
+            'question': blank_sentence,
+            'correct_answer': word_to_blank,
+            'explanation': f"The word '{word_to_blank}' completes the sentence correctly."
+        }
+    
+    def _find_relevant_text(self, topic: str) -> str:
+        """
+        Verilen konuyla ilgili metni bulur.
+        """
+        for utterance in self.gladia_data:
+            if topic.lower() in utterance.get('text', '').lower():
+                return utterance['text']
+        return ""
+
     def process_tests(self) -> List[Dict[str, Any]]:
         """
         Ham test verilerini işler ve yapılandırılmış bir formata dönüştürür.
@@ -223,4 +400,18 @@ class TestGenerator:
         
         html += "</div>"
         logger.debug(f"{len(self.processed_tests)} test için HTML oluşturuldu.")
-        return html 
+        return html
+
+    def get_tests_as_json(self) -> List[Dict[str, Any]]:
+        """
+        Test verilerini JSON formatında döndürür.
+        Her zaman en fazla 10 soru döndürür.
+        
+        Returns:
+            List[Dict[str, Any]]: İşlenmiş test verileri (maksimum 10 soru).
+        """
+        if not self.processed_tests:
+            return []
+            
+        # En fazla 10 soru döndür
+        return self.processed_tests[:10] 

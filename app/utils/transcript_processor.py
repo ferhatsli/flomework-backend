@@ -1,141 +1,24 @@
-import pandas as pd
+import json
 import re
 import os
 from typing import Dict, List, Any
+from datetime import datetime, timedelta
 
 class TranscriptProcessor:
     """
-    Zoom ders transkriptlerini işleyen sınıf.
+    Transkript verilerini işleyen ve analiz eden sınıf.
     """
     
-    def __init__(self, file_path: str):
+    def __init__(self, transcript_data: Dict[str, Any]):
         """
         TranscriptProcessor sınıfını başlatır.
         
         Args:
-            file_path (str): Transkript dosyasının yolu.
+            transcript_data (Dict[str, Any]): Gladia'dan alınan transkript verisi
         """
-        self.file_path = file_path
-        self.transcript_data = None
+        self.transcript_data = transcript_data
         self.processed_data = None
         
-    def load_transcript(self) -> bool:
-        """
-        Transkript dosyasını yükler.
-        
-        Returns:
-            bool: Yükleme başarılı ise True, değilse False.
-        """
-        try:
-            # Dosya uzantısına göre okuma yöntemi belirleme
-            if self.file_path.endswith('.csv'):
-                # CSV dosyasını okuma
-                with open(self.file_path, 'r', encoding='utf-8') as file:
-                    content = file.read()
-                
-                # Konuşma verilerini ayıklama
-                self.transcript_data = self._parse_transcript(content)
-                return True
-            elif self.file_path.endswith('.txt'):
-                # TXT dosyasını okuma
-                with open(self.file_path, 'r', encoding='utf-8') as file:
-                    content = file.read()
-                
-                # Konuşma verilerini ayıklama
-                self.transcript_data = self._parse_txt_transcript(content)
-                return True
-            else:
-                print(f"Desteklenmeyen dosya formatı: {self.file_path}")
-                return False
-        except Exception as e:
-            print(f"Transkript yüklenirken hata oluştu: {str(e)}")
-            return False
-    
-    def _parse_transcript(self, content: str) -> List[Dict[str, Any]]:
-        """
-        CSV transkript içeriğini ayrıştırır.
-        
-        Args:
-            content (str): Transkript içeriği.
-            
-        Returns:
-            List[Dict[str, Any]]: Ayrıştırılmış transkript verileri.
-        """
-        lines = content.split('\n')
-        transcript_data = []
-        
-        i = 0
-        while i < len(lines):
-            # Zaman damgası ve konuşmacı bilgisini içeren satırları bul
-            if '-->' in lines[i] and i > 0:
-                # Önceki satır konuşma numarası
-                index = lines[i-1].strip()
-                
-                # Zaman damgası
-                time_line = lines[i].strip()
-                time_match = re.search(r'(\d+:\d+:\d+\.\d+) --> (\d+:\d+:\d+\.\d+)', time_line)
-                
-                if time_match and i+1 < len(lines):
-                    start_time = time_match.group(1)
-                    end_time = time_match.group(2)
-                    
-                    # Konuşmacı ve metin
-                    speaker_text_line = lines[i+1].strip()
-                    speaker_text_match = re.search(r'([^:]+): (.*)', speaker_text_line)
-                    
-                    if speaker_text_match:
-                        speaker = speaker_text_match.group(1).strip()
-                        text = speaker_text_match.group(2).strip()
-                        
-                        transcript_data.append({
-                            'index': index,
-                            'start_time': start_time,
-                            'end_time': end_time,
-                            'speaker': speaker,
-                            'text': text
-                        })
-            i += 1
-        
-        return transcript_data
-    
-    def _parse_txt_transcript(self, content: str) -> List[Dict[str, Any]]:
-        """
-        Text formatındaki Zoom transkript içeriğini ayrıştırır.
-        
-        Args:
-            content (str): Transkript içeriği.
-            
-        Returns:
-            List[Dict[str, Any]]: Ayrıştırılmış transkript verileri.
-        """
-        lines = content.split('\n')
-        transcript_data = []
-        index = 1
-        
-        for line in lines:
-            line = line.strip()
-            if not line:  # Boş satırları atla
-                continue
-                
-            # Konuşmacı ve metin formatını kontrol et: "Ad Soyad: Metin"
-            speaker_text_match = re.search(r'^([^:]+):\s*(.*)', line)
-            
-            if speaker_text_match:
-                speaker = speaker_text_match.group(1).strip()
-                text = speaker_text_match.group(2).strip()
-                
-                # Zaman bilgisi olmadığı için indeks kullanılabilir
-                transcript_data.append({
-                    'index': str(index),
-                    'start_time': '', # Text dosyasında zaman bilgisi olmayabilir
-                    'end_time': '',
-                    'speaker': speaker,
-                    'text': text
-                })
-                index += 1
-        
-        return transcript_data
-    
     def process_transcript(self) -> Dict[str, Any]:
         """
         Transkripti işler ve analiz için hazırlar.
@@ -144,62 +27,142 @@ class TranscriptProcessor:
             Dict[str, Any]: İşlenmiş transkript verileri.
         """
         if not self.transcript_data:
-            print("Transkript verisi yüklenmemiş.")
+            print("Transkript verisi bulunamadı.")
             return {}
         
-        # Konuşmacıları gruplandırma
-        speakers = {}
-        for entry in self.transcript_data:
-            speaker = entry['speaker']
-            if speaker not in speakers:
-                speakers[speaker] = []
-            speakers[speaker].append(entry['text'])
+        # Gladia verisini işle
+        gladia_data = self.transcript_data.get('gladia_response', [])
         
-        # Her konuşmacının toplam konuşma sayısı
-        speaker_counts = {speaker: len(texts) for speaker, texts in speakers.items()}
+        # Konuşma istatistiklerini hesapla
+        stats = self._calculate_statistics(gladia_data)
         
-        # Tüm konuşma metinlerini birleştirme
-        all_text = ' '.join([entry['text'] for entry in self.transcript_data])
+        # Kelime analizini yap
+        vocabulary = self._analyze_vocabulary(gladia_data)
         
-        # Sonuçları hazırlama
+        # Sonuçları hazırla
         self.processed_data = {
-            'speakers': speakers,
-            'speaker_counts': speaker_counts,
-            'all_text': all_text,
-            'transcript_data': self.transcript_data
+            'gladia_response': gladia_data,
+            'calculations': {
+                'statistics': stats,
+                'vocabulary': vocabulary
+            }
         }
         
         return self.processed_data
     
-    def get_conversation_summary(self) -> str:
+    def _calculate_statistics(self, gladia_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Konuşmanın özetini oluşturur.
+        Konuşma istatistiklerini hesaplar.
+        
+        Args:
+            gladia_data: Gladia'dan gelen konuşma verileri
+            
+        Returns:
+            Dict[str, Any]: Hesaplanan istatistikler
+        """
+        # Konuşmacıları gruplandır
+        speakers = {}
+        for entry in gladia_data:
+            speaker = entry.get('speaker', 'Unknown')
+            if speaker not in speakers:
+                speakers[speaker] = []
+            speakers[speaker].append(entry)
+        
+        # Her konuşmacı için istatistikler
+        speaker_stats = {}
+        for speaker, entries in speakers.items():
+            total_words = sum(len(entry.get('text', '').split()) for entry in entries)
+            total_time = sum(float(entry.get('duration', 0)) for entry in entries)
+            
+            speaker_stats[speaker] = {
+                'total_utterances': len(entries),
+                'total_words': total_words,
+                'total_time': round(total_time, 2),
+                'words_per_minute': round((total_words / total_time) * 60, 2) if total_time > 0 else 0
+            }
+        
+        # Genel istatistikler
+        total_time = sum(stats['total_time'] for stats in speaker_stats.values())
+        total_words = sum(stats['total_words'] for stats in speaker_stats.values())
+        
+        return {
+            'speaker_stats': speaker_stats,
+            'total_time': round(total_time, 2),
+            'total_words': total_words,
+            'average_words_per_minute': round((total_words / total_time) * 60, 2) if total_time > 0 else 0
+        }
+    
+    def _analyze_vocabulary(self, gladia_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Konuşmalardaki kelime kullanımını analiz eder.
+        
+        Args:
+            gladia_data: Gladia'dan gelen konuşma verileri
+            
+        Returns:
+            Dict[str, Any]: Kelime analizi sonuçları
+        """
+        # Tüm kelimeleri topla
+        all_words = []
+        for entry in gladia_data:
+            text = entry.get('text', '').lower()
+            # Noktalama işaretlerini kaldır
+            text = re.sub(r'[^\w\s]', '', text)
+            words = text.split()
+            all_words.extend(words)
+        
+        # Kelime frekanslarını hesapla
+        word_freq = {}
+        for word in all_words:
+            word_freq[word] = word_freq.get(word, 0) + 1
+        
+        # En sık kullanılan kelimeleri bul
+        common_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)[:20]
+        
+        # Kelime çeşitliliği
+        vocabulary_size = len(set(all_words))
+        total_words = len(all_words)
+        
+        return {
+            'vocabulary_size': vocabulary_size,
+            'total_words': total_words,
+            'unique_words_ratio': round(vocabulary_size / total_words * 100, 2) if total_words > 0 else 0,
+            'most_common_words': [{'word': word, 'count': count} for word, count in common_words],
+            'word_frequency': word_freq
+        }
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """
+        İşlenmiş verinin özetini oluşturur.
         
         Returns:
-            str: Konuşma özeti.
+            Dict[str, Any]: Veri özeti
         """
         if not self.processed_data:
-            print("Transkript işlenmemiş.")
-            return ""
+            print("Veri henüz işlenmemiş.")
+            return {}
         
-        # Konuşmacıları ve konuşma sayılarını içeren özet
-        summary = "Konuşma Özeti:\n\n"
+        stats = self.processed_data['calculations']['statistics']
+        vocab = self.processed_data['calculations']['vocabulary']
         
-        # Konuşmacılar ve konuşma sayıları
-        summary += "Konuşmacılar:\n"
-        for speaker, count in self.processed_data['speaker_counts'].items():
-            summary += f"- {speaker}: {count} konuşma\n"
-        
-        # Toplam konuşma sayısı
-        total_entries = len(self.transcript_data)
-        summary += f"\nToplam Konuşma Sayısı: {total_entries}\n"
-        
-        # Konuşma süresi (ilk ve son giriş arasındaki fark)
-        if total_entries > 0:
-            first_entry = self.transcript_data[0]
-            last_entry = self.transcript_data[-1]
-            if first_entry.get('start_time') and last_entry.get('end_time'):
-                summary += f"İlk Konuşma Zamanı: {first_entry['start_time']}\n"
-                summary += f"Son Konuşma Zamanı: {last_entry['end_time']}\n"
-        
-        return summary 
+        return {
+            'duration': {
+                'total_minutes': round(stats['total_time'] / 60, 2),
+                'total_seconds': stats['total_time']
+            },
+            'speakers': {
+                speaker: {
+                    'talk_time_minutes': round(data['total_time'] / 60, 2),
+                    'utterances': data['total_utterances'],
+                    'words': data['total_words'],
+                    'words_per_minute': data['words_per_minute']
+                }
+                for speaker, data in stats['speaker_stats'].items()
+            },
+            'vocabulary': {
+                'unique_words': vocab['vocabulary_size'],
+                'total_words': vocab['total_words'],
+                'diversity_ratio': vocab['unique_words_ratio'],
+                'top_words': vocab['most_common_words'][:10]  # İlk 10 kelime
+            }
+        } 

@@ -3,6 +3,7 @@ import logging
 import google.generativeai as genai
 from typing import Dict, List, Any
 from dotenv import load_dotenv
+import json
 
 # .env dosyasından API anahtarını yükle
 load_dotenv()
@@ -42,8 +43,12 @@ class AIAnalyzer:
         Returns:
             Dict[str, Any]: Analiz sonuçları.
         """
-        # Tüm konuşma metinlerini al
-        all_text = transcript_data.get('all_text', '')
+        # Gladia verisinden metni al
+        all_text = ""
+        for utterance in transcript_data.get('gladia_response', []):
+            if 'text' in utterance:
+                all_text += utterance['text'] + "\n"
+                
         logger.debug(f"Analiz edilecek metin uzunluğu: {len(all_text)} karakter")
         
         # Metin çok uzunsa, ilk 8000 karakteri al (Gemini API sınırlamaları nedeniyle)
@@ -53,36 +58,65 @@ class AIAnalyzer:
         
         # Yapay zekaya gönderilecek istek
         prompt = f"""
-        Aşağıdaki İngilizce ders transkriptini analiz et ve şu bilgileri çıkar:
+        Analyze the following English lesson transcript and extract this information:
         
-        1. Öğrencinin İngilizce seviyesi (A1, A2, B1, B2, C1, C2)
-        2. Öğrencinin güçlü yönleri
-        3. Öğrencinin geliştirmesi gereken alanlar
-        4. Derste öğrenilen yeni kelimeler ve deyimler
-        5. Derste tartışılan ana konular
+        1. Student's English level (A1, A2, B1, B2, C1, C2)
+        2. Student's strengths
+        3. Areas for improvement
+        4. New vocabulary and expressions learned
+        5. Main topics discussed
+        6. Grammar points covered
+        7. Pronunciation feedback
+        8. Speaking fluency assessment
         
-        Transkript:
+        Transcript:
         {all_text}
         
-        Lütfen analiz sonuçlarını JSON formatında döndür.
+        Return ONLY a valid JSON object with this exact structure, no other text:
+        {{
+            "level": "B1",
+            "strengths": ["strength1", "strength2"],
+            "areas_for_improvement": ["area1", "area2"],
+            "vocabulary": {{
+                "new_words": ["word1", "word2"],
+                "expressions": ["expr1", "expr2"]
+            }},
+            "topics": ["topic1", "topic2"],
+            "grammar": {{
+                "points_covered": ["point1", "point2"],
+                "errors": ["error1", "error2"]
+            }},
+            "pronunciation": {{
+                "strengths": ["strength1", "strength2"],
+                "issues": ["issue1", "issue2"]
+            }},
+            "fluency": {{
+                "rating": "3/5",
+                "comments": ["comment1", "comment2"]
+            }}
+        }}
         """
         
         try:
-            # Yapay zekadan yanıt al
-            logger.debug("Yapay zekadan analiz yanıtı isteniyor...")
             response = self.model.generate_content(prompt)
-            
-            # Yanıtı işle
             analysis_text = response.text
-            logger.debug(f"Yapay zeka analiz yanıtı alındı. Uzunluk: {len(analysis_text)} karakter")
             
-            # Basit bir analiz sonucu oluştur
-            analysis_result = {
-                'raw_analysis': analysis_text,
-                'success': True
+            # JSON formatını temizle
+            analysis_text = analysis_text.strip()
+            if analysis_text.startswith('```json'):
+                analysis_text = analysis_text[7:]
+            if analysis_text.endswith('```'):
+                analysis_text = analysis_text[:-3]
+            analysis_text = analysis_text.strip()
+            
+            # JSON'ı parse et
+            analysis_data = json.loads(analysis_text)
+            
+            return {
+                'success': True,
+                'openai': analysis_data
             }
             
-            return analysis_result
         except Exception as e:
             logger.error(f"Yapay zeka analizi sırasında hata oluştu: {str(e)}")
             return {
@@ -90,6 +124,156 @@ class AIAnalyzer:
                 'error': str(e)
             }
     
+    def generate_questions(self, transcript_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Transkript verisinden test soruları oluşturur.
+        
+        Args:
+            transcript_data (Dict[str, Any]): İşlenmiş transkript verileri.
+            
+        Returns:
+            Dict[str, Any]: Oluşturulan sorular.
+        """
+        # Gladia verisinden metni al
+        all_text = ""
+        for utterance in transcript_data.get('gladia_response', []):
+            if 'text' in utterance:
+                all_text += utterance['text'] + "\n"
+        
+        # OpenAI analizini al
+        openai_analysis = transcript_data.get('openai', {}).get('analysis', '')
+        
+        prompt = f"""
+        Based on the following English lesson transcript and analysis, generate three types of questions:
+        
+        1. Multiple choice questions (10)
+        2. True/False questions (5)
+        3. Fill in the blank questions (5)
+        
+        Transcript:
+        {all_text}
+        
+        Analysis:
+        {openai_analysis}
+        
+        Return ONLY a valid JSON object with this exact structure, no other text:
+        {{
+            "multiple_choice": [
+                {{
+                    "type": "multiple_choice",
+                    "question": "Question text",
+                    "options": [
+                        {{"id": "A", "text": "Option A"}},
+                        {{"id": "B", "text": "Option B"}},
+                        {{"id": "C", "text": "Option C"}},
+                        {{"id": "D", "text": "Option D"}}
+                    ],
+                    "correct_answer": "A",
+                    "explanation": "Why this is correct"
+                }}
+            ],
+            "true_false": [
+                {{
+                    "type": "true_false",
+                    "question": "Statement",
+                    "options": [
+                        {{"id": "T", "text": "True"}},
+                        {{"id": "F", "text": "False"}}
+                    ],
+                    "correct_answer": "T",
+                    "explanation": "Why this is true/false"
+                }}
+            ],
+            "fill_in_blank": [
+                {{
+                    "type": "fill_in_blank",
+                    "question": "Sentence with _____",
+                    "correct_answer": "missing word",
+                    "explanation": "Why this word fits"
+                }}
+            ]
+        }}
+        """
+        
+        try:
+            response = self.model.generate_content(prompt)
+            questions_text = response.text
+            
+            # JSON formatını temizle
+            questions_text = questions_text.strip()
+            if questions_text.startswith('```json'):
+                questions_text = questions_text[7:]
+            if questions_text.endswith('```'):
+                questions_text = questions_text[:-3]
+            questions_text = questions_text.strip()
+            
+            # JSON'ı parse et
+            questions_data = json.loads(questions_text)
+            
+            return {
+                'success': True,
+                'questions': questions_data
+            }
+            
+        except Exception as e:
+            logger.error(f"Soru üretimi sırasında hata oluştu: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def evaluate_answers(self, questions: Dict[str, List[Dict[str, Any]]], 
+                        user_answers: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+        """
+        Kullanıcının cevaplarını değerlendirir.
+        
+        Args:
+            questions: Orijinal sorular ve doğru cevapları
+            user_answers: Kullanıcının cevapları
+            
+        Returns:
+            Dict[str, Any]: Değerlendirme sonuçları
+        """
+        results = {
+            'summary': {
+                'total_questions': 0,
+                'correct_answers': 0,
+                'wrong_answers': 0,
+                'success_rate': 0
+            },
+            'by_question_type': {}
+        }
+        
+        # Her soru tipi için değerlendirme yap
+        for q_type in ['multiple_choice', 'true_false', 'fill_in_blank']:
+            type_questions = questions.get(q_type, [])
+            type_answers = user_answers.get(q_type, [])
+            
+            correct = 0
+            total = len(type_questions)
+            
+            for q, a in zip(type_questions, type_answers):
+                if q.get('correct_answer') == a.get('user_answer'):
+                    correct += 1
+            
+            results['by_question_type'][q_type] = {
+                'total': total,
+                'correct': correct,
+                'wrong': total - correct,
+                'success_rate': (correct / total * 100) if total > 0 else 0
+            }
+            
+            results['summary']['total_questions'] += total
+            results['summary']['correct_answers'] += correct
+            
+        # Genel başarı oranını hesapla
+        total = results['summary']['total_questions']
+        correct = results['summary']['correct_answers']
+        results['summary']['wrong_answers'] = total - correct
+        results['summary']['success_rate'] = (correct / total * 100) if total > 0 else 0
+        
+        return results
+
     def analyze_zoom_transcript(self, transcript_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Zoom transkriptini analiz eder ve konuşanları tespit ederek öğrenme düzeyini belirler.

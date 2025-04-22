@@ -1,5 +1,5 @@
 # app paketi başlatma dosyası
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, redirect
 from flask_cors import CORS
 import os
 import json
@@ -8,6 +8,7 @@ import traceback
 from app.utils.transcript_processor import TranscriptProcessor
 from app.utils.ai_analyzer import AIAnalyzer
 from app.utils.test_generator import TestGenerator
+from app.utils.flalingo_service import FlalingoService
 from dotenv import load_dotenv
 
 # .env dosyasını yükle
@@ -25,9 +26,9 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 # Configure CORS
 CORS(app, resources={
     r"/api/*": {
-        "origins": ["http://localhost:8000", "http://127.0.0.1:8000"],  # Add your Laravel domain in production
+        "origins": ["https://exercise.flalingo.com"],
         "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"]
+        "allow_headers": ["Content-Type", "Authorization"]
     }
 })
 
@@ -154,8 +155,9 @@ def upload_transcript():
         
         # Test verilerini işle
         test_generator = TestGenerator(tests_result.get('raw_tests', ''))
-        processed_tests = test_generator.process_tests()
-        logger.debug(f"İşlenmiş testler: {processed_tests}")
+        test_generator.process_tests()  # Önce process_tests çağrılmalı
+        processed_tests = test_generator.get_tests_as_json()  # Sonra JSON alınmalı
+        logger.debug(f"İşlenmiş testler (JSON): {processed_tests}")
         
         # Return results
         return jsonify({
@@ -192,6 +194,145 @@ def bad_request(error):
         'error': 'Bad request',
         'message': str(error)
     }), 400
+
+@app.route('/your-custom-exercise')
+def custom_exercise():
+    """
+    Frontend'den gelen ilk istek için yönlendirme endpoint'i.
+    """
+    auth_token = request.args.get('auth_token')
+    flai_report = request.args.get('flai_report')
+    
+    if not auth_token or not flai_report:
+        return jsonify({
+            'success': False,
+            'error': 'auth_token ve flai_report parametreleri gerekli'
+        }), 400
+    
+    # Frontend'e yönlendir
+    return redirect(f'/api/flai-exercise?auth_token={auth_token}&flai_report={flai_report}')
+
+@app.route('/api/flai-exercise', methods=['GET'])
+def get_exercise():
+    """
+    Flalingo'dan transkript alıp analiz eder ve test oluşturur.
+    """
+    try:
+        # API token ve report ID'yi al
+        auth_token = request.args.get('auth_token')
+        flai_report = request.args.get('flai_report')
+        
+        if not auth_token or not flai_report:
+            return jsonify({
+                'success': False,
+                'error': 'auth_token ve flai_report parametreleri gerekli'
+            }), 400
+            
+        # Flalingo'dan transkript al
+        flalingo_service = FlalingoService()
+        transcript_response = flalingo_service.get_transcript(auth_token, flai_report)
+        
+        if not transcript_response.get('success', False):
+            return jsonify({
+                'success': False,
+                'error': transcript_response.get('error', 'Transkript alınamadı')
+            }), 500
+            
+        # Transkript verisini işle
+        transcript_data = transcript_response['data']
+        processor = TranscriptProcessor(transcript_data)
+        processed_data = processor.process_transcript()
+        
+        # AI analizi yap
+        analyzer = AIAnalyzer()
+        analysis_result = analyzer.analyze_zoom_transcript(processed_data)
+        
+        if not analysis_result.get('success', False):
+            return jsonify({
+                'success': False,
+                'error': 'Transkript analizi başarısız'
+            }), 500
+            
+        # Test oluştur
+        tests_result = analyzer.generate_zoom_tests(analysis_result, processed_data)
+        
+        if not tests_result.get('success', False):
+            return jsonify({
+                'success': False,
+                'error': 'Test oluşturma başarısız'
+            }), 500
+            
+        # Test verilerini işle (JSON formatı için)
+        test_generator = TestGenerator(tests_result.get('raw_tests', ''))
+        test_generator.process_tests()
+        processed_tests = test_generator.get_tests_as_json()  # Maksimum 10 soru
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'analysis': analysis_result.get('raw_analysis', ''),
+                'tests': processed_tests
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Exercise oluşturma sırasında hata: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'success': False,
+            'error': f'İşlem hatası: {str(e)}'
+        }), 500
+
+@app.route('/api/flai-exercise-completion', methods=['POST'])
+def completion():
+    """
+    Egzersiz tamamlandığında kullanıcı cevaplarını değerlendirir.
+    """
+    try:
+        data = request.get_json()
+        auth_token = data.get('auth_token')
+        flai_report = data.get('flai_report')
+        exercise_response = data.get('exercise_response')
+        
+        if not all([auth_token, flai_report, exercise_response]):
+            return jsonify({
+                'success': False,
+                'error': 'auth_token, flai_report ve exercise_response gerekli'
+            }), 400
+        
+        # Cevapları kontrol et ve sonuçları hesapla
+        correct = 0
+        wrong = 0
+        
+        for answer in exercise_response:
+            if answer.get('user_answer') == answer.get('correct_answer'):
+                correct += 1
+            else:
+                wrong += 1
+        
+        # Özet oluştur
+        summary = {
+            'total_questions': len(exercise_response),
+            'correct_answers': correct,
+            'wrong_answers': wrong,
+            'success_rate': (correct / len(exercise_response)) * 100 if exercise_response else 0
+        }
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'correct': correct,
+                'wrong': wrong,
+                'summary': summary
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Completion değerlendirme sırasında hata: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.errorhandler(404)
 def not_found(error):
